@@ -21,7 +21,6 @@ from dotenv import load_dotenv
 load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
 
-
 class ThreatLevel(Enum):
     LOW = "Low"
     MEDIUM = "Medium"
@@ -35,6 +34,9 @@ class NetworkMetrics:
     packet_loss: float
     suspicious_activity: float
     timestamp: float = time.time()
+    x_coord: float = 0.0
+    y_coord: float = 0.0
+    z_coord: float = 0.0
 
 class MetricsQueue:
     def __init__(self, maxsize: int = 1000):
@@ -55,13 +57,25 @@ class NetworkMonitor:
             'suspicious_activity': 7.0,
             'packet_loss': 3.0
         }
+        self.theta = 0  # For 3D animation
         
     def generate_metrics(self) -> NetworkMetrics:
+        traffic = random.uniform(100, 1000)
+        latency = random.uniform(1, 100)
+        packet_loss = random.uniform(0, 5)
+        suspicious_activity = random.uniform(0, 10)
+        
+        # Update theta for 3D animation
+        self.theta += 0.1
+        
         return NetworkMetrics(
-            traffic=random.uniform(100, 1000),
-            latency=random.uniform(1, 100),
-            packet_loss=random.uniform(0, 5),
-            suspicious_activity=random.uniform(0, 10)
+            traffic=traffic,
+            latency=latency,
+            packet_loss=packet_loss,
+            suspicious_activity=suspicious_activity,
+            x_coord=traffic * np.cos(self.theta),
+            y_coord=latency * np.sin(self.theta),
+            z_coord=suspicious_activity
         )
         
     def check_alerts(self, metrics: NetworkMetrics) -> List[str]:
@@ -71,40 +85,6 @@ class NetworkMonitor:
         if metrics.packet_loss > self.alert_threshold['packet_loss']:
             alerts.append("⚠️ High packet loss detected!")
         return alerts
-
-st.set_page_config(
-    page_title="Advanced NIDS",
-    page_icon="🛡️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.markdown("""
-    <style>
-    .main {
-        background-color: #1a1a1a;
-        color: #ffffff;
-    }
-    .stButton>button {
-        background-color: #2E7D32;
-        color: white;
-        border-radius: 20px;
-    }
-    .stTextInput>div>div>input {
-        background-color: #2b2b2b;
-        color: white;
-    }
-    .stSelectbox>div>div>input {
-        background-color: #2b2b2b;
-        color: white;
-    }
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 1rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 
 @st.cache_resource
 def initialize_llm() -> Tuple[LLMChain, LLMChain, LLMChain]:
@@ -145,22 +125,12 @@ def initialize_llm() -> Tuple[LLMChain, LLMChain, LLMChain]:
 
         prompt2 = PromptTemplate(
             input_variables=["network_insights"],
-            template="""
-            Based on the network insights:
-            {network_insights}
-            
-            Provide a detailed threat analysis addressing potential security concerns.
-            """
+            template="Based on the network insights:\n{network_insights}\n\nProvide a detailed threat analysis addressing potential security concerns."
         )
 
         prompt3 = PromptTemplate(
             input_variables=["threat_analysis"],
-            template="""
-            Based on the threat analysis:
-            {threat_analysis}
-            
-            Generate a comprehensive security report with actionable recommendations.
-            """
+            template="Based on the threat analysis:\n{threat_analysis}\n\nGenerate a comprehensive security report with actionable recommendations."
         )
 
         chain1 = LLMChain(llm=llm, prompt=prompt1, output_key="network_insights")
@@ -185,6 +155,26 @@ def load_model() -> Tuple:
         st.error(f"⚠️ Error loading model: {str(e)}")
         st.stop()
 
+# Initialize Streamlit UI
+st.set_page_config(
+    page_title="Advanced NIDS",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+    <style>
+    .main { background-color: #1a1a1a; color: #ffffff; }
+    .stButton>button { background-color: #2E7D32; color: white; border-radius: 20px; }
+    .stTextInput>div>div>input { background-color: #2b2b2b; color: white; }
+    .stSelectbox>div>div>input { background-color: #2b2b2b; color: white; }
+    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Initialize components
 try:
     logistic_model, scaler, label_encoders, feature_names = load_model()
     chain1, chain2, chain3 = initialize_llm()
@@ -192,6 +182,7 @@ except Exception as e:
     st.error(f"⚠️ Error initializing components: {str(e)}")
     st.stop()
 
+# Sidebar
 with st.sidebar:
     st.title("🛡️ NIDS Control Panel")
     st.markdown("---")
@@ -209,14 +200,14 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         current_connections = random.randint(50, 200)
-        st.metric("Active Connections", current_connections, 
-                 delta=random.randint(-10, 10))
+        st.metric("Active Connections", current_connections, delta=random.randint(-10, 10))
     with col2:
         threat_level = random.choice(list(ThreatLevel))
         st.metric("Threat Level", threat_level.value)
 
 st.title("🌐 Network Intrusion Detection System")
 
+# Real-time Monitoring Mode
 if mode == "Real-time Monitoring":
     st.subheader("Real-time Network Traffic Monitoring")
     
@@ -242,6 +233,7 @@ if mode == "Real-time Monitoring":
         metrics_data = st.session_state.network_monitor.metrics_queue.get_all()
         df = pd.DataFrame([vars(m) for m in metrics_data])
         
+        # Display current metrics
         with metrics_placeholder.container():
             m1, m2, m3, m4 = st.columns(4)
             
@@ -251,21 +243,18 @@ if mode == "Real-time Monitoring":
                     f"{metrics.traffic:.1f} Mbps",
                     delta=f"{metrics.traffic - df['traffic'].mean():.1f}"
                 )
-            
             with m2:
                 st.metric(
                     "Latency",
                     f"{metrics.latency:.1f} ms",
                     delta=f"{metrics.latency - df['latency'].mean():.1f}"
                 )
-            
             with m3:
                 st.metric(
                     "Packet Loss",
                     f"{metrics.packet_loss:.2f}%",
                     delta=f"{metrics.packet_loss - df['packet_loss'].mean():.2f}"
                 )
-            
             with m4:
                 st.metric(
                     "Suspicious Activity",
@@ -273,9 +262,11 @@ if mode == "Real-time Monitoring":
                     delta=f"{metrics.suspicious_activity - df['suspicious_activity'].mean():.1f}"
                 )
         
+        # Display charts
         with chart_placeholder.container():
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns([2, 2, 2])
             
+            # Traffic and Latency Chart
             with c1:
                 fig1 = go.Figure()
                 fig1.add_trace(go.Scatter(
@@ -296,6 +287,7 @@ if mode == "Real-time Monitoring":
                 )
                 st.plotly_chart(fig1, use_container_width=True)
             
+            # Packet Loss and Suspicious Activity Chart
             with c2:
                 fig2 = go.Figure()
                 fig2.add_trace(go.Scatter(
@@ -315,7 +307,49 @@ if mode == "Real-time Monitoring":
                     template='plotly_dark' if dark_mode else 'plotly'
                 )
                 st.plotly_chart(fig2, use_container_width=True)
+            
+            # 3D Network Visualization
+            with c3:
+                fig3 = go.Figure(data=[go.Scatter3d(
+                    x=df['x_coord'].tail(50),
+                    y=df['y_coord'].tail(50),
+                    z=df['z_coord'].tail(50),
+                    mode='lines+markers',
+                    marker=dict(
+                        size=4,
+                        color=df['suspicious_activity'].tail(50),
+                        colorscale='Viridis',
+                        showscale=True
+                    ),
+                    line=dict(
+                        color='#00ff00',
+                        width=2
+                    ),
+                    hovertemplate=
+                        '<b>Traffic</b>: %{x:.1f}<br>' +
+                        '<b>Latency</b>: %{y:.1f}<br>' +
+                        '<b>Suspicious Activity</b>: %{z:.1f}<extra></extra>'
+                )])
+                
+                fig3.update_layout(
+                    title='3D Network Activity Visualization',
+                    scene=dict(
+                        xaxis_title='Traffic',
+                        yaxis_title='Latency',
+                        zaxis_title='Suspicious Activity',
+                        camera=dict(
+                            up=dict(x=0, y=0, z=1),
+                            center=dict(x=0, y=0, z=0),
+                            eye=dict(x=1.5, y=1.5, z=1.5)
+                        )
+                    ),
+                    height=300,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    template='plotly_dark' if dark_mode else 'plotly'
+                )
+                st.plotly_chart(fig3, use_container_width=True)
         
+        # Display alerts
         alerts = st.session_state.network_monitor.check_alerts(metrics)
         with alert_placeholder.container():
             for alert in alerts:
@@ -326,7 +360,6 @@ if mode == "Real-time Monitoring":
         
         time.sleep(update_interval)
         st.rerun()
-
 elif mode == "Advanced Threat Analysis":
     st.subheader("Network Traffic Analysis with LLM Integration")
     
