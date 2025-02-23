@@ -486,9 +486,9 @@ elif mode == "Advanced Threat Analysis":
                             'anomalous_behavior_score': str(anomalous_behavior_score)
                         }
                         
-                        chain_results = chain1.invoke(**llm_input)
-                        threat_results = chain2.invoke(network_insights=chain_results)
-                        security_report = chain3.invoke(threat_analysis=threat_results)
+                        chain_results = chain1.run(llm_input)
+                        threat_results = chain2.run(network_insights=chain_results)
+                        security_report = chain3.run(threat_analysis=threat_results)
                         
                         tabs = st.tabs(["Network Insights", "Threat Analysis", "Security Report"])
                         
