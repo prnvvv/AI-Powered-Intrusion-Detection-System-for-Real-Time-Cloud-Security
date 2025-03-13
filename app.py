@@ -17,10 +17,15 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 from dotenv import load_dotenv
+import psutil
+import platform
+from datetime import datetime, timedelta
 
+# Environment setup
 load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
 
+# Data structures
 class ThreatLevel(Enum):
     LOW = "Low"
     MEDIUM = "Medium"
@@ -57,7 +62,7 @@ class NetworkMonitor:
             'suspicious_activity': 7.0,
             'packet_loss': 3.0
         }
-        self.theta = 0  # For 3D animation
+        self.theta = 0
         
     def generate_metrics(self) -> NetworkMetrics:
         traffic = random.uniform(100, 1000)
@@ -65,7 +70,6 @@ class NetworkMonitor:
         packet_loss = random.uniform(0, 5)
         suspicious_activity = random.uniform(0, 10)
         
-        # Update theta for 3D animation
         self.theta += 0.1
         
         return NetworkMetrics(
@@ -86,6 +90,7 @@ class NetworkMonitor:
             alerts.append("⚠️ High packet loss detected!")
         return alerts
 
+# Cached resources
 @st.cache_resource
 def initialize_llm() -> Tuple[LLMChain, LLMChain, LLMChain]:
     try:
@@ -140,7 +145,8 @@ def initialize_llm() -> Tuple[LLMChain, LLMChain, LLMChain]:
         return chain1, chain2, chain3
     except Exception as e:
         logging.error(f"Error initializing LLM: {str(e)}")
-        raise
+        st.error(f"Error initializing LLM: {str(e)}")
+        return None, None, None
 
 @st.cache_resource
 def load_model() -> Tuple:
@@ -150,12 +156,12 @@ def load_model() -> Tuple:
         return model_data
     except FileNotFoundError:
         st.error("⚠️ Model file not found. Please ensure model.pkl is in the directory.")
-        st.stop()
+        return None, None, None, None
     except Exception as e:
         st.error(f"⚠️ Error loading model: {str(e)}")
-        st.stop()
+        return None, None, None, None
 
-# Initialize Streamlit UI
+# UI Configuration
 st.set_page_config(
     page_title="Advanced NIDS",
     page_icon="🛡️",
@@ -163,7 +169,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
 st.markdown("""
     <style>
     .main { background-color: #1a1a1a; color: #ffffff; }
@@ -174,13 +179,25 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Initialize components
+# Initialize app components
 try:
-    logistic_model, scaler, label_encoders, feature_names = load_model()
-    chain1, chain2, chain3 = initialize_llm()
+    model_result = load_model()
+    if model_result[0] is None:
+        st.warning("Unable to load model. Some features may be limited.")
+        logistic_model, scaler, label_encoders, feature_names = None, None, None, None
+    else:
+        logistic_model, scaler, label_encoders, feature_names = model_result
+    
+    llm_result = initialize_llm()
+    if llm_result[0] is None:
+        st.warning("Unable to initialize LLM. Advanced analysis will be limited.")
+        chain1, chain2, chain3 = None, None, None
+    else:
+        chain1, chain2, chain3 = llm_result
 except Exception as e:
     st.error(f"⚠️ Error initializing components: {str(e)}")
-    st.stop()
+    logistic_model, scaler, label_encoders, feature_names = None, None, None, None
+    chain1, chain2, chain3 = None, None, None
 
 # Sidebar
 with st.sidebar:
@@ -205,9 +222,10 @@ with st.sidebar:
         threat_level = random.choice(list(ThreatLevel))
         st.metric("Threat Level", threat_level.value)
 
+# Main content
 st.title("🌐 Network Intrusion Detection System")
 
-# Real-time Monitoring Mode
+# Real-time Monitoring mode
 if mode == "Real-time Monitoring":
     st.subheader("Real-time Network Traffic Monitoring")
     
@@ -233,7 +251,6 @@ if mode == "Real-time Monitoring":
         metrics_data = st.session_state.network_monitor.metrics_queue.get_all()
         df = pd.DataFrame([vars(m) for m in metrics_data])
         
-        # Display current metrics
         with metrics_placeholder.container():
             m1, m2, m3, m4 = st.columns(4)
             
@@ -241,44 +258,43 @@ if mode == "Real-time Monitoring":
                 st.metric(
                     "Network Traffic",
                     f"{metrics.traffic:.1f} Mbps",
-                    delta=f"{metrics.traffic - df['traffic'].mean():.1f}"
+                    delta=f"{metrics.traffic - df['traffic'].mean():.1f}" if len(df) > 1 else None
                 )
             with m2:
                 st.metric(
                     "Latency",
                     f"{metrics.latency:.1f} ms",
-                    delta=f"{metrics.latency - df['latency'].mean():.1f}"
+                    delta=f"{metrics.latency - df['latency'].mean():.1f}" if len(df) > 1 else None
                 )
             with m3:
                 st.metric(
                     "Packet Loss",
                     f"{metrics.packet_loss:.2f}%",
-                    delta=f"{metrics.packet_loss - df['packet_loss'].mean():.2f}"
+                    delta=f"{metrics.packet_loss - df['packet_loss'].mean():.2f}" if len(df) > 1 else None
                 )
             with m4:
                 st.metric(
                     "Suspicious Activity",
                     f"{metrics.suspicious_activity:.1f}",
-                    delta=f"{metrics.suspicious_activity - df['suspicious_activity'].mean():.1f}"
+                    delta=f"{metrics.suspicious_activity - df['suspicious_activity'].mean():.1f}" if len(df) > 1 else None
                 )
         
-        # Display charts
         with chart_placeholder.container():
             c1, c2, c3 = st.columns([2, 2, 2])
             
-            # Traffic and Latency Chart
             with c1:
                 fig1 = go.Figure()
-                fig1.add_trace(go.Scatter(
-                    y=df['traffic'],
-                    name='Traffic (Mbps)',
-                    line=dict(color='#2E7D32')
-                ))
-                fig1.add_trace(go.Scatter(
-                    y=df['latency'],
-                    name='Latency (ms)',
-                    line=dict(color='#FFA726')
-                ))
+                if len(df) > 0:
+                    fig1.add_trace(go.Scatter(
+                        y=df['traffic'],
+                        name='Traffic (Mbps)',
+                        line=dict(color='#2E7D32')
+                    ))
+                    fig1.add_trace(go.Scatter(
+                        y=df['latency'],
+                        name='Latency (ms)',
+                        line=dict(color='#FFA726')
+                    ))
                 fig1.update_layout(
                     title='Network Traffic and Latency',
                     height=300,
@@ -287,19 +303,19 @@ if mode == "Real-time Monitoring":
                 )
                 st.plotly_chart(fig1, use_container_width=True)
             
-            # Packet Loss and Suspicious Activity Chart
             with c2:
                 fig2 = go.Figure()
-                fig2.add_trace(go.Scatter(
-                    y=df['packet_loss'],
-                    name='Packet Loss (%)',
-                    line=dict(color='#EF5350')
-                ))
-                fig2.add_trace(go.Scatter(
-                    y=df['suspicious_activity'],
-                    name='Suspicious Activity',
-                    line=dict(color='#AB47BC')
-                ))
+                if len(df) > 0:
+                    fig2.add_trace(go.Scatter(
+                        y=df['packet_loss'],
+                        name='Packet Loss (%)',
+                        line=dict(color='#EF5350')
+                    ))
+                    fig2.add_trace(go.Scatter(
+                        y=df['suspicious_activity'],
+                        name='Suspicious Activity',
+                        line=dict(color='#AB47BC')
+                    ))
                 fig2.update_layout(
                     title='Packet Loss and Suspicious Activity',
                     height=300,
@@ -308,28 +324,29 @@ if mode == "Real-time Monitoring":
                 )
                 st.plotly_chart(fig2, use_container_width=True)
             
-            # 3D Network Visualization
             with c3:
-                fig3 = go.Figure(data=[go.Scatter3d(
-                    x=df['x_coord'].tail(50),
-                    y=df['y_coord'].tail(50),
-                    z=df['z_coord'].tail(50),
-                    mode='lines+markers',
-                    marker=dict(
-                        size=4,
-                        color=df['suspicious_activity'].tail(50),
-                        colorscale='Viridis',
-                        showscale=True
-                    ),
-                    line=dict(
-                        color='#00ff00',
-                        width=2
-                    ),
-                    hovertemplate=
-                        '<b>Traffic</b>: %{x:.1f}<br>' +
-                        '<b>Latency</b>: %{y:.1f}<br>' +
-                        '<b>Suspicious Activity</b>: %{z:.1f}<extra></extra>'
-                )])
+                fig3 = go.Figure()
+                if len(df) > 0:
+                    fig3 = go.Figure(data=[go.Scatter3d(
+                        x=df['x_coord'].tail(min(50, len(df))),
+                        y=df['y_coord'].tail(min(50, len(df))),
+                        z=df['z_coord'].tail(min(50, len(df))),
+                        mode='lines+markers',
+                        marker=dict(
+                            size=4,
+                            color=df['suspicious_activity'].tail(min(50, len(df))),
+                            colorscale='Viridis',
+                            showscale=True
+                        ),
+                        line=dict(
+                            color='#00ff00',
+                            width=2
+                        ),
+                        hovertemplate=
+                            '<b>Traffic</b>: %{x:.1f}<br>' +
+                            '<b>Latency</b>: %{y:.1f}<br>' +
+                            '<b>Suspicious Activity</b>: %{z:.1f}<extra></extra>'
+                    )])
                 
                 fig3.update_layout(
                     title='3D Network Activity Visualization',
@@ -349,7 +366,6 @@ if mode == "Real-time Monitoring":
                 )
                 st.plotly_chart(fig3, use_container_width=True)
         
-        # Display alerts
         alerts = st.session_state.network_monitor.check_alerts(metrics)
         with alert_placeholder.container():
             for alert in alerts:
@@ -360,229 +376,345 @@ if mode == "Real-time Monitoring":
         
         time.sleep(update_interval)
         st.rerun()
+
+# Advanced Threat Analysis mode
 elif mode == "Advanced Threat Analysis":
     st.subheader("Network Traffic Analysis with LLM Integration")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        protocol = st.selectbox("Protocol", label_encoders['Protocol'].classes_)
-        packet_size = st.slider("Packet Size", 0, 1000, 500)
-        flow_duration = st.slider("Flow Duration", 0, 1000, 100)
-        bytes_per_second = st.slider("Bytes Per Second", 0.0, 1000.0, 100.0)
-        login_attempts = st.number_input("Login Attempts", 0, 100, 10)
-        api_requests = st.number_input("API Requests", 0, 1000, 100)
-        abnormal_data_transfer = st.slider("Abnormal Data Transfer (MB)", 0.0, 100.0, 10.0)
-    
-    with col2:
-        encrypted_traffic_ratio = st.slider("Encrypted Traffic Ratio", 0.0, 1.0, 0.5)
-        failed_auth_attempts = st.number_input("Failed Authentication Attempts", 0, 100, 5)
-        tcp_flags = st.selectbox("TCP Flags", label_encoders['TCP_Flags'].classes_)
-        suspicious_ip_flag = st.selectbox("Suspicious IP Flag", [0, 1])
-        port_scan_activity = st.number_input("Port Scan Activity", 0, 100, 20)
-        suspicious_dns_request = st.number_input("Suspicious DNS Request", 0, 100, 15)
-        anomalous_behavior_score = st.slider("Anomalous Behavior Score", 0.0, 1.0, 0.5)
-    
-    if st.button("Analyze Traffic", key="analyze"):
-        with st.spinner("Analyzing network traffic..."):
-            try:
-                # Create DataFrame with exact feature names
-                input_data = pd.DataFrame({
-                    'Protocol': [protocol],
-                    'TCP_Flags': [tcp_flags],
-                    'Packet_Size': [packet_size],
-                    'Flow_Duration': [flow_duration],
-                    'Bytes_Per_Second': [bytes_per_second],
-                    'Login_Attempts': [login_attempts],
-                    'API_Requests': [api_requests],
-                    'Abnormal_Data_Transfer_MB': [abnormal_data_transfer],
-                    'Encrypted_Traffic_Ratio': [encrypted_traffic_ratio],
-                    'Failed_Auth_Attempts': [failed_auth_attempts],
-                    'Suspicious_IP_Flag': [suspicious_ip_flag],
-                    'Port_Scan_Activity': [port_scan_activity],
-                    'Suspicious_DNS_Request': [suspicious_dns_request],
-                    'Anomalous_Behavior_Score': [anomalous_behavior_score]
-                })
-                
-                # Transform categorical variables first
-                input_data['Protocol'] = label_encoders['Protocol'].transform(input_data['Protocol'])
-                input_data['TCP_Flags'] = label_encoders['TCP_Flags'].transform(input_data['TCP_Flags'])
-                
-                # Ensure column order matches feature_names
-                input_data = input_data[feature_names]
-                
-                # Scale numeric features
-                numeric_cols = input_data.select_dtypes(include=['int64', 'float64']).columns
-                input_data[numeric_cols] = scaler.transform(input_data[numeric_cols])
-                
-                # Make prediction
-                prediction = logistic_model.predict(input_data)
-                prediction_proba = logistic_model.predict_proba(input_data)
-                
-                result = label_encoders['Object_Type'].inverse_transform(prediction)[0]
-                confidence = np.max(prediction_proba) * 100
-                
-                # Display results
-                st.markdown("### 🎯 ML Model Results")
-                cols = st.columns(3)
-                
-                with cols[0]:
-                    st.markdown(f"""
-                        **Detected Threat**: {result}  
-                        **Confidence**: {confidence:.2f}%  
-                        **Analysis Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                    """)
-                
-                with cols[1]:
-                    fig = go.Figure(go.Indicator(
-                        mode="gauge+number",
-                        value=confidence,
-                        title={'text': "Confidence Score"},
-                        gauge={
-                            'axis': {'range': [0, 100]},
-                            'bar': {'color': "darkgreen"},
-                            'steps': [
-                                {'range': [0, 50], 'color': "lightgray"},
-                                {'range': [50, 75], 'color': "gray"},
-                                {'range': [75, 100], 'color': "darkgray"}
-                            ]
-                        }
-                    ))
-                    fig.update_layout(height=300, template='plotly_dark' if dark_mode else 'plotly')
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with cols[2]:
-                    threat_types = label_encoders['Object_Type'].classes_
-                    fig = px.bar(
-                        x=threat_types,
-                        y=prediction_proba[0],
-                        title="Threat Probability Distribution"
-                    )
-                    fig.update_layout(
-                        xaxis_title="Threat Type",
-                        yaxis_title="Probability",
-                        height=300,
-                        template='plotly_dark' if dark_mode else 'plotly'
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                if enable_llm:
-                    try:
-                        # Convert input data to format expected by LLM
-                        llm_input = {
-                            'protocol': protocol,
-                            'packet_size': str(packet_size),
-                            'flow_duration': str(flow_duration),
-                            'bytes_per_second': str(bytes_per_second),
-                            'login_attempts': str(login_attempts),
-                            'api_requests': str(api_requests),
-                            'abnormal_data_transfer': str(abnormal_data_transfer),
-                            'encrypted_traffic_ratio': str(encrypted_traffic_ratio),
-                            'failed_auth_attempts': str(failed_auth_attempts),
-                            'tcp_flags': tcp_flags,
-                            'suspicious_ip_flag': str(suspicious_ip_flag),
-                            'port_scan_activity': str(port_scan_activity),
-                            'suspicious_dns_request': str(suspicious_dns_request),
-                            'anomalous_behavior_score': str(anomalous_behavior_score)
-                        }
-                        
-                        chain_results = chain1.run(llm_input)
-                        threat_results = chain2.run(network_insights=chain_results)
-                        security_report = chain3.run(threat_analysis=threat_results)
-                        
-                        tabs = st.tabs(["Network Insights", "Threat Analysis", "Security Report"])
-                        
-                        with tabs[0]:
-                            st.markdown(chain_results)
-                        with tabs[1]:
-                            st.markdown(threat_results)
-                        with tabs[2]:
-                            st.markdown(security_report)
+    if logistic_model is None or label_encoders is None:
+        st.error("Model is not loaded. Unable to perform Advanced Threat Analysis.")
+    else:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            protocol = st.selectbox("Protocol", label_encoders['Protocol'].classes_)
+            packet_size = st.slider("Packet Size", 0, 1000, 500)
+            flow_duration = st.slider("Flow Duration", 0, 1000, 100)
+            bytes_per_second = st.slider("Bytes Per Second", 0.0, 1000.0, 100.0)
+            login_attempts = st.number_input("Login Attempts", 0, 100, 10)
+            api_requests = st.number_input("API Requests", 0, 1000, 100)
+            abnormal_data_transfer = st.slider("Abnormal Data Transfer (MB)", 0.0, 100.0, 10.0)
+        
+        with col2:
+            encrypted_traffic_ratio = st.slider("Encrypted Traffic Ratio", 0.0, 1.0, 0.5)
+            failed_auth_attempts = st.number_input("Failed Authentication Attempts", 0, 100, 5)
+            tcp_flags = st.selectbox("TCP Flags", label_encoders['TCP_Flags'].classes_)
+            suspicious_ip_flag = st.selectbox("Suspicious IP Flag", [0, 1])
+            port_scan_activity = st.number_input("Port Scan Activity", 0, 100, 20)
+            suspicious_dns_request = st.number_input("Suspicious DNS Request", 0, 100, 15)
+            anomalous_behavior_score = st.slider("Anomalous Behavior Score", 0.0, 1.0, 0.5)
+        
+        if st.button("Analyze Traffic", key="analyze"):
+            with st.spinner("Analyzing network traffic..."):
+                try:
+                    input_data = pd.DataFrame({
+                        'Protocol': [protocol],
+                        'TCP_Flags': [tcp_flags],
+                        'Packet_Size': [packet_size],
+                        'Flow_Duration': [flow_duration],
+                        'Bytes_Per_Second': [bytes_per_second],
+                        'Login_Attempts': [login_attempts],
+                        'API_Requests': [api_requests],
+                        'Abnormal_Data_Transfer_MB': [abnormal_data_transfer],
+                        'Encrypted_Traffic_Ratio': [encrypted_traffic_ratio],
+                        'Failed_Auth_Attempts': [failed_auth_attempts],
+                        'Suspicious_IP_Flag': [suspicious_ip_flag],
+                        'Port_Scan_Activity': [port_scan_activity],
+                        'Suspicious_DNS_Request': [suspicious_dns_request],
+                        'Anomalous_Behavior_Score': [anomalous_behavior_score]
+                    })
                     
-                    except Exception as e:
-                        st.error(f"LLM Analysis Error: {str(e)}")
-                        st.info("Continuing with statistical analysis only")
-            
-            except Exception as e:
-                st.error(f"Error in prediction: {str(e)}")
-                st.error("Debug info:")
-                st.write("Feature names expected:", feature_names)
-                st.write("Features provided:", input_data.columns.tolist())
+                    input_data['Protocol'] = label_encoders['Protocol'].transform(input_data['Protocol'])
+                    input_data['TCP_Flags'] = label_encoders['TCP_Flags'].transform(input_data['TCP_Flags'])
+                    
+                    input_data = input_data[feature_names]
+                    
+                    numeric_cols = input_data.select_dtypes(include=['int64', 'float64']).columns
+                    input_data[numeric_cols] = scaler.transform(input_data[numeric_cols])
+                    
+                    prediction = logistic_model.predict(input_data)
+                    prediction_proba = logistic_model.predict_proba(input_data)
+                    
+                    result = label_encoders['Object_Type'].inverse_transform(prediction)[0]
+                    confidence = np.max(prediction_proba) * 100
+                    
+                    st.markdown("### 🎯 ML Model Results")
+                    cols = st.columns(3)
+                    
+                    with cols[0]:
+                        st.markdown(f"""
+                            **Detected Threat**: {result}  
+                            **Confidence**: {confidence:.2f}%  
+                            **Analysis Time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                        """)
+                    
+                    with cols[1]:
+                        fig = go.Figure(go.Indicator(
+                            mode="gauge+number",
+                            value=confidence,
+                            title={'text': "Confidence Score"},
+                            gauge={
+                                'axis': {'range': [0, 100]},
+                                'bar': {'color': "darkgreen"},
+                                'steps': [
+                                    {'range': [0, 50], 'color': "lightgray"},
+                                    {'range': [50, 75], 'color': "gray"},
+                                    {'range': [75, 100], 'color': "darkgray"}
+                                ]
+                            }
+                        ))
+                        fig.update_layout(height=300, template='plotly_dark' if dark_mode else 'plotly')
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with cols[2]:
+                        threat_types = label_encoders['Object_Type'].classes_
+                        fig = px.bar(
+                            x=threat_types,
+                            y=prediction_proba[0],
+                            title="Threat Probability Distribution"
+                        )
+                        fig.update_layout(
+                            xaxis_title="Threat Type",
+                            yaxis_title="Probability",
+                            height=300,
+                            template='plotly_dark' if dark_mode else 'plotly'
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    if enable_llm and chain1 is not None and chain2 is not None and chain3 is not None:
+                        try:
+                            llm_input = {
+                                'protocol': protocol,
+                                'packet_size': str(packet_size),
+                                'flow_duration': str(flow_duration),
+                                'bytes_per_second': str(bytes_per_second),
+                                'login_attempts': str(login_attempts),
+                                'api_requests': str(api_requests),
+                                'abnormal_data_transfer': str(abnormal_data_transfer),
+                                'encrypted_traffic_ratio': str(encrypted_traffic_ratio),
+                                'failed_auth_attempts': str(failed_auth_attempts),
+                                'tcp_flags': tcp_flags,
+                                'suspicious_ip_flag': str(suspicious_ip_flag),
+                                'port_scan_activity': str(port_scan_activity),
+                                'suspicious_dns_request': str(suspicious_dns_request),
+                                'anomalous_behavior_score': str(anomalous_behavior_score)
+                            }
+                            
+                            chain_results = chain1.run(llm_input)
+                            threat_results = chain2.run(network_insights=chain_results)
+                            security_report = chain3.run(threat_analysis=threat_results)
+                            
+                            tabs = st.tabs(["Network Insights", "Threat Analysis", "Security Report"])
+                            
+                            with tabs[0]:
+                                st.markdown(chain_results)
+                            with tabs[1]:
+                                st.markdown(threat_results)
+                            with tabs[2]:
+                                st.markdown(security_report)
+                        
+                        except Exception as e:
+                            st.error(f"LLM Analysis Error: {str(e)}")
+                            st.info("Continuing with statistical analysis only")
+                
+                except Exception as e:
+                    st.error(f"Error in prediction: {str(e)}")
+                    st.error("Debug info:")
+                    if feature_names is not None:
+                        st.write("Feature names expected:", feature_names)
+                    st.write("Features provided:", input_data.columns.tolist())
 
+
+# System Performance mode
 elif mode == "System Performance":
     st.subheader("System Performance Monitoring")
     
-    # Initialize session state for performance data
+    # Initialize session state for performance data if it doesn't exist
     if 'performance_data' not in st.session_state:
         st.session_state.performance_data = []
         st.session_state.last_update = time.time()
     
-    # Update interval in seconds
-    UPDATE_INTERVAL = 5
+    # Configuration
+    UPDATE_INTERVAL = 5  # seconds
+    MAX_DATA_POINTS = 100
     
-    # Check if it's time to update
+    # Update data at regular intervals
     current_time = time.time()
-    if current_time - st.session_state.last_update >= UPDATE_INTERVAL:
-        # Generate new performance data
-        current_data = {
-            'timestamp': datetime.now(),
-            'cpu_usage': random.uniform(20, 80),
-            'memory_usage': random.uniform(30, 90),
-            'disk_usage': random.uniform(40, 95),
-            'network_throughput': random.uniform(50, 500),
-            'active_connections': random.randint(50, 200),
-            'system_load': random.uniform(0, 1),
-            'io_wait': random.uniform(0, 20)
+    if current_time - st.session_state.last_update >= UPDATE_INTERVAL or not st.session_state.performance_data:
+        # Get actual system metrics using psutil
+        try:
+            # CPU metrics
+            cpu_percent = psutil.cpu_percent(interval=1)
+            
+            # Memory metrics
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            
+            # Disk metrics
+            disk = psutil.disk_usage('/')
+            disk_percent = disk.percent
+            
+            # Network metrics (cumulative bytes sent/received)
+            net_io = psutil.net_io_counters()
+            network_throughput = 0
+            
+            # Calculate network throughput if we have previous data
+            if hasattr(st.session_state, 'prev_net_io') and st.session_state.prev_net_io is not None:
+                prev_net_io = st.session_state.prev_net_io
+                time_diff = current_time - st.session_state.prev_net_io_time
+                
+                # Calculate bytes per second and convert to Mbps
+                bytes_per_sec = (net_io.bytes_sent + net_io.bytes_recv - 
+                                prev_net_io.bytes_sent - prev_net_io.bytes_recv) / time_diff
+                network_throughput = bytes_per_sec * 8 / 1_000_000  # Convert to Mbps
+            
+            # Store current network data for next calculation
+            st.session_state.prev_net_io = net_io
+            st.session_state.prev_net_io_time = current_time
+            
+            # Get load average (on Unix systems)
+            try:
+                load_avg = psutil.getloadavg()[0]  # 1-minute load average
+                # Normalize by CPU count for better comparison
+                system_load = load_avg / psutil.cpu_count()
+            except (AttributeError, OSError):
+                # Windows doesn't have load average
+                system_load = cpu_percent / 100
+            
+            # Get active connections (approximated by counting network connections)
+            try:
+                active_connections = len(psutil.net_connections())
+            except (psutil.AccessDenied, PermissionError):
+                # Fallback if we don't have permission
+                active_connections = 0
+            
+            # IO wait (not directly available on all platforms)
+            try:
+                cpu_times = psutil.cpu_times_percent()
+                io_wait = cpu_times.iowait if hasattr(cpu_times, 'iowait') else 0
+            except:
+                io_wait = 0
+                
+            current_data = {
+                'timestamp': datetime.now(),
+                'cpu_usage': cpu_percent,
+                'memory_usage': memory_percent,
+                'disk_usage': disk_percent,
+                'network_throughput': network_throughput,
+                'active_connections': active_connections,
+                'system_load': system_load,
+                'io_wait': io_wait
+            }
+            
+            # Add new data point
+            st.session_state.performance_data.append(current_data)
+            
+            # Limit the number of data points
+            if len(st.session_state.performance_data) > MAX_DATA_POINTS:
+                st.session_state.performance_data = st.session_state.performance_data[-MAX_DATA_POINTS:]
+            
+            # Update last update time
+            st.session_state.last_update = current_time
+            
+        except Exception as e:
+            st.error(f"Error collecting system metrics: {str(e)}")
+            # Fallback to random data if real metrics can't be collected
+            if not st.session_state.performance_data:
+                current_data = {
+                    'timestamp': datetime.now(),
+                    'cpu_usage': random.uniform(20, 80),
+                    'memory_usage': random.uniform(30, 90),
+                    'disk_usage': random.uniform(40, 95),
+                    'network_throughput': random.uniform(50, 500),
+                    'active_connections': random.randint(50, 200),
+                    'system_load': random.uniform(0, 1),
+                    'io_wait': random.uniform(0, 20)
+                }
+                st.session_state.performance_data.append(current_data)
+    
+    # Display system info
+    with st.expander("System Information", expanded=False):
+        system_info = {
+            "System": platform.system(),
+            "Release": platform.release(),
+            "Version": platform.version(),
+            "Machine": platform.machine(),
+            "Processor": platform.processor(),
+            "Physical CPUs": psutil.cpu_count(logical=False),
+            "Logical CPUs": psutil.cpu_count(logical=True),
+            "Total Memory": f"{psutil.virtual_memory().total / (1024**3):.2f} GB",
+            "Platform": platform.platform()
         }
         
-        st.session_state.performance_data.append(current_data)
-        if len(st.session_state.performance_data) > 100:
-            st.session_state.performance_data.pop(0)
-        
-        st.session_state.last_update = current_time
+        col1, col2 = st.columns(2)
+        for i, (key, value) in enumerate(system_info.items()):
+            if i < len(system_info) // 2:
+                col1.metric(key, value)
+            else:
+                col2.metric(key, value)
     
     # Display current metrics
-    col1, col2, col3 = st.columns(3)
-    current_data = st.session_state.performance_data[-1] if st.session_state.performance_data else {
-        'cpu_usage': 0, 'memory_usage': 0, 'disk_usage': 0
-    }
-    
-    with col1:
-        st.metric(
-            "CPU Usage",
-            f"{current_data['cpu_usage']:.1f}%",
-            delta=f"{random.uniform(-5, 5):.1f}%"
-        )
-    
-    with col2:
-        st.metric(
-            "Memory Usage",
-            f"{current_data['memory_usage']:.1f}%",
-            delta=f"{random.uniform(-5, 5):.1f}%"
-        )
-    
-    with col3:
-        st.metric(
-            "Disk Usage",
-            f"{current_data['disk_usage']:.1f}%",
-            delta=f"{random.uniform(-2, 2):.1f}%"
-        )
-    
-    # Create DataFrame from performance data
     if st.session_state.performance_data:
+        current_data = st.session_state.performance_data[-1]
+        
+        # Top metrics row
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Calculate delta from previous value if available
+            delta = None
+            if len(st.session_state.performance_data) > 1:
+                prev_data = st.session_state.performance_data[-2]
+                delta = current_data['cpu_usage'] - prev_data['cpu_usage']
+            
+            st.metric(
+                "CPU Usage",
+                f"{current_data['cpu_usage']:.1f}%",
+                delta=f"{delta:.1f}%" if delta is not None else None
+            )
+        
+        with col2:
+            # Calculate delta from previous value if available
+            delta = None
+            if len(st.session_state.performance_data) > 1:
+                prev_data = st.session_state.performance_data[-2]
+                delta = current_data['memory_usage'] - prev_data['memory_usage']
+            
+            st.metric(
+                "Memory Usage",
+                f"{current_data['memory_usage']:.1f}%",
+                delta=f"{delta:.1f}%" if delta is not None else None
+            )
+        
+        with col3:
+            # Calculate delta from previous value if available
+            delta = None
+            if len(st.session_state.performance_data) > 1:
+                prev_data = st.session_state.performance_data[-2]
+                delta = current_data['disk_usage'] - prev_data['disk_usage']
+            
+            st.metric(
+                "Disk Usage",
+                f"{current_data['disk_usage']:.1f}%",
+                delta=f"{delta:.1f}%" if delta is not None else None
+            )
+        
+        # Convert session state data to DataFrame for plotting
         df_performance = pd.DataFrame(st.session_state.performance_data)
         
-        # Display tabs
+        # Create tabs for different metric views
         tab1, tab2 = st.tabs(["Resource Usage", "System Metrics"])
         
         with tab1:
             st.subheader("System Resource Usage")
+            
+            # Resource usage plot
             fig = go.Figure()
             
             metrics_to_plot = {
-                'cpu_usage': {'name': 'CPU Usage', 'color': '#1f77b4'},
-                'memory_usage': {'name': 'Memory Usage', 'color': '#ff7f0e'},
-                'disk_usage': {'name': 'Disk Usage', 'color': '#2ca02c'}
+                'cpu_usage': {'name': 'CPU Usage (%)', 'color': '#1f77b4'},
+                'memory_usage': {'name': 'Memory Usage (%)', 'color': '#ff7f0e'},
+                'disk_usage': {'name': 'Disk Usage (%)', 'color': '#2ca02c'}
             }
             
             for metric, config in metrics_to_plot.items():
@@ -590,12 +722,14 @@ elif mode == "System Performance":
                     x=df_performance['timestamp'],
                     y=df_performance[metric],
                     name=config['name'],
-                    line=dict(width=2, color=config['color'])
+                    line=dict(width=2, color=config['color']),
+                    hovertemplate='%{y:.1f}%<extra></extra>'
                 ))
             
             fig.update_layout(
                 title='System Resource Usage Over Time',
                 yaxis_title='Usage (%)',
+                yaxis=dict(range=[0, 100]),  # Fixed range for percentages
                 height=400,
                 template='plotly_dark' if dark_mode else 'plotly',
                 legend=dict(
@@ -604,56 +738,84 @@ elif mode == "System Performance":
                     y=1.02,
                     xanchor="right",
                     x=1
-                )
+                ),
+                hovermode="x unified"
             )
             
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Add refresh button
+            if st.button("Refresh Data", key="refresh_resources"):
+                st.session_state.last_update = 0  # Force update on next rerun
+                st.rerun()
         
         with tab2:
             st.subheader("Additional System Metrics")
             col1, col2 = st.columns(2)
             
             with col1:
+                # System load gauge
                 fig = go.Figure(go.Indicator(
                     mode="gauge+number",
-                    value=current_data['system_load'],
+                    value=min(current_data['system_load'], 1),  # Cap at 1 for visualization
                     title={'text': "System Load Average"},
                     gauge={
                         'axis': {'range': [0, 1]},
-                        'bar': {'color': "darkgreen"},
+                        'bar': {'color': "#2E7D32"},  # Dark green to match the app theme
                         'steps': [
-                            {'range': [0, 0.5], 'color': "lightgray"},
-                            {'range': [0.5, 0.8], 'color': "gray"},
-                            {'range': [0.8, 1], 'color': "darkgray"}
-                        ]
-                    }
+                            {'range': [0, 0.5], 'color': "#E8F5E9"},  # Light green
+                            {'range': [0.5, 0.8], 'color': "#A5D6A7"},  # Medium green
+                            {'range': [0.8, 1], 'color': "#4CAF50"}  # Bright green
+                        ],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': 0.9
+                        }
+                    },
+                    number={'suffix': "", 'font': {'size': 24}}
                 ))
-                fig.update_layout(height=300, template='plotly_dark' if dark_mode else 'plotly')
+                fig.update_layout(
+                    height=300, 
+                    template='plotly_dark' if dark_mode else 'plotly',
+                    margin=dict(l=30, r=30, t=50, b=30)
+                )
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
+                # IO Wait gauge
                 fig = go.Figure(go.Indicator(
                     mode="gauge+number",
-                    value=current_data['io_wait'],
+                    value=min(current_data['io_wait'], 20),  # Cap at 20 for visualization
                     title={'text': "I/O Wait (%)"},
                     gauge={
                         'axis': {'range': [0, 20]},
-                        'bar': {'color': "darkgreen"},
+                        'bar': {'color': "#2E7D32"},
                         'steps': [
-                            {'range': [0, 5], 'color': "lightgray"},
-                            {'range': [5, 10], 'color': "gray"},
-                            {'range': [10, 20], 'color': "darkgray"}
-                        ]
-                    }
+                            {'range': [0, 5], 'color': "#E8F5E9"},
+                            {'range': [5, 10], 'color': "#A5D6A7"},
+                            {'range': [10, 20], 'color': "#4CAF50"}
+                        ],
+                        'threshold': {
+                            'line': {'color': "red", 'width': 4},
+                            'thickness': 0.75,
+                            'value': 15
+                        }
+                    },
+                    number={'suffix': "%", 'font': {'size': 24}}
                 ))
-                fig.update_layout(height=300, template='plotly_dark' if dark_mode else 'plotly')
+                fig.update_layout(
+                    height=300, 
+                    template='plotly_dark' if dark_mode else 'plotly',
+                    margin=dict(l=30, r=30, t=50, b=30)
+                )
                 st.plotly_chart(fig, use_container_width=True)
             
-            # Network metrics
             st.subheader("Network Performance")
             col3, col4 = st.columns(2)
             
             with col3:
+                # Network throughput chart
                 fig = px.line(
                     df_performance,
                     x='timestamp',
@@ -665,9 +827,12 @@ elif mode == "System Performance":
                     height=300,
                     template='plotly_dark' if dark_mode else 'plotly'
                 )
+                # Add range slider
+                fig.update_xaxes(rangeslider_visible=True)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col4:
+                # Active connections chart
                 fig = px.line(
                     df_performance,
                     x='timestamp',
@@ -678,32 +843,52 @@ elif mode == "System Performance":
                     height=300,
                     template='plotly_dark' if dark_mode else 'plotly'
                 )
+                # Add range slider
+                fig.update_xaxes(rangeslider_visible=True)
                 st.plotly_chart(fig, use_container_width=True)
             
-            # System Health Analysis
-            with st.expander("System Health Analysis"):
+            # System health analysis
+            with st.expander("System Health Analysis", expanded=True):
+                # Calculate health score
                 health_score = 100 - (
-                    current_data['cpu_usage'] +
-                    current_data['memory_usage'] +
-                    current_data['disk_usage']
-                ) / 3
+                    current_data['cpu_usage'] / 100 * 0.4 +
+                    current_data['memory_usage'] / 100 * 0.3 +
+                    current_data['disk_usage'] / 100 * 0.2 +
+                    min(current_data['io_wait'], 20) / 20 * 0.1
+                ) * 100
                 
+                # Create a progress bar for health score
+                health_color = "green" if health_score > 70 else "orange" if health_score > 50 else "red"
                 st.markdown(f"""
                     ### System Health Score: {health_score:.1f}%
+                """)
+                st.progress(health_score/100, text=f"Health: {health_score:.1f}%")
+                
+                # Display current metrics in a formatted way
+                st.markdown(f"""
+                    #### Current Status:
                     
-                    Current Status:
-                    - Network Throughput: {current_data['network_throughput']:.1f} Mbps
-                    - Active Connections: {current_data['active_connections']}
-                    - System Load: {current_data['system_load']:.2f}
-                    - I/O Wait: {current_data['io_wait']:.1f}%
+                    | Metric | Value | Status |
+                    | ------ | ----- | ------ |
+                    | Network Throughput | {current_data['network_throughput']:.1f} Mbps | {"✅" if current_data['network_throughput'] > 10 else "⚠️"} |
+                    | Active Connections | {current_data['active_connections']} | {"✅" if current_data['active_connections'] < 150 else "⚠️"} |
+                    | System Load | {current_data['system_load']:.2f} | {"✅" if current_data['system_load'] < 0.7 else "⚠️"} |
+                    | I/O Wait | {current_data['io_wait']:.1f}% | {"✅" if current_data['io_wait'] < 10 else "⚠️"} |
                 """)
                 
+                # Health status message
                 if health_score < 50:
-                    st.error("⚠️ System requires immediate attention!")
+                    st.error("⚠️ System requires immediate attention! Check resources and consider scaling up.")
                 elif health_score < 70:
-                    st.warning("⚠️ System performance is suboptimal.")
+                    st.warning("⚠️ System performance is suboptimal. Monitor for potential issues.")
                 else:
-                    st.success("✅ System is performing optimally.")
+                    st.success("✅ System is performing optimally. All metrics within normal ranges.")
+                
+                # Add a refresh button
+                if st.button("Refresh Health Data", key="refresh_health"):
+                    st.session_state.last_update = 0  # Force update on next rerun
+                    st.rerun()
 
-# Footer Section
+                    st.rerun()
+
 st.markdown("---")
