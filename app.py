@@ -889,6 +889,4 @@ elif mode == "System Performance":
                     st.session_state.last_update = 0  # Force update on next rerun
                     st.rerun()
 
-                    st.rerun()
-
 st.markdown("---")
