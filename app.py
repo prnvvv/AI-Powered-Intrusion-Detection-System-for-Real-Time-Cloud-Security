@@ -206,7 +206,7 @@ with st.sidebar:
     
     mode = st.selectbox(
         "Select Operation Mode",
-        ["Real-time Monitoring", "Advanced Threat Analysis", "System Performance"]
+        ["Graphical Visualization", "Advanced Threat Analysis", "System Performance"]
     )
     
     dark_mode = st.toggle("Dark Mode", value=True)
@@ -225,9 +225,9 @@ with st.sidebar:
 # Main content
 st.title("🌐 Network Intrusion Detection System")
 
-# Real-time Monitoring mode
-if mode == "Real-time Monitoring":
-    st.subheader("Real-time Network Traffic Monitoring")
+# Graphical Visualization mode
+if mode == "Graphical Visualization":
+    st.subheader("Graphical Visualization Network Traffic Monitoring")
     
     if 'network_monitor' not in st.session_state:
         st.session_state.network_monitor = NetworkMonitor()
