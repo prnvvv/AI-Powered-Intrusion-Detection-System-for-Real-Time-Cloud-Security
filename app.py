@@ -95,7 +95,7 @@ class NetworkMonitor:
 def initialize_llm() -> Tuple[LLMChain, LLMChain, LLMChain]:
     try:
         llm = ChatGroq(
-            model="qwen-2.5-32b",
+            model="gemma2-9b-it",
             temperature=0.2,
             groq_api_key=api_key,
             max_tokens=2000
