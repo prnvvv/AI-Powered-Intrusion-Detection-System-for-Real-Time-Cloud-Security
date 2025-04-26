@@ -223,7 +223,7 @@ with st.sidebar:
         st.metric("Threat Level", threat_level.value)
 
 # Main content
-st.title("🌐 Network Intrusion Detection System")
+st.title("🌐 Network Intrusion Detection System For Cloud Security")
 
 # Graphical Visualization mode
 if mode == "Graphical Visualization":
